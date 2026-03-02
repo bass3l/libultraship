@@ -802,6 +802,9 @@ void Interpreter::ImportTextureCi4(int tile, bool importReplacement) {
     if (lineSizeBytes > 0 && lineSizeBytes < resultLineSizeBytes) {
         effectiveLineSize = lineSizeBytes;
     }
+    if (effectiveLineSize == 0) {
+        return;
+    }
     uint32_t width = effectiveLineSize * 2;
     uint32_t height = sizeBytes / effectiveLineSize;
 
