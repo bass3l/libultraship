@@ -38,6 +38,8 @@
 #include "libultraship/libultra/os.h"
 
 #include <spdlog/fmt/fmt.h>
+#include "spdlog/spdlog.h"
+#include <cstring>
 
 std::stack<std::string> currentDir;
 
@@ -779,20 +781,11 @@ void Interpreter::ImportTextureCi4(int tile, bool importReplacement) {
     else
         palette = mRdp->palettes[palIdx / 8] + (palIdx % 8) * 16 * 2;
 
-    SUPPORT_CHECK(fullImageLineSizeBytes == lineSizeBytes);
-
-    for (uint32_t i = 0; i < sizeBytes * 2; i++) {
-        uint8_t byte = addr[i / 2];
-        uint8_t idx = (byte >> (4 - (i % 2) * 4)) & 0xf;
-        uint16_t col16 = (palette[idx * 2] << 8) | palette[idx * 2 + 1]; // Big endian load
-        uint8_t a = col16 & 1;
-        uint8_t r = col16 >> 11;
-        uint8_t g = (col16 >> 6) & 0x1f;
-        uint8_t b = (col16 >> 1) & 0x1f;
-        mTexUploadBuffer[4 * i + 0] = SCALE_5_8(r);
-        mTexUploadBuffer[4 * i + 1] = SCALE_5_8(g);
-        mTexUploadBuffer[4 * i + 2] = SCALE_5_8(b);
-        mTexUploadBuffer[4 * i + 3] = a ? 255 : 0;
+    if (palette == nullptr) {
+        SPDLOG_ERROR("ImportTextureCi4: NULL palette! palIdx={} palettes[0]={} palettes[1]={} addr={} sizeBytes={} tile={}",
+                     palIdx, (uintptr_t)mRdp->palettes[0], (uintptr_t)mRdp->palettes[1],
+                     (uintptr_t)addr, sizeBytes, tile);
+        return;
     }
 
     uint32_t resultLineSizeBytes = mRdp->texture_tile[tile].line_size_bytes;
@@ -800,8 +793,44 @@ void Interpreter::ImportTextureCi4(int tile, bool importReplacement) {
         resultLineSizeBytes *= metadata->h_byte_scale;
     }
 
-    uint32_t width = resultLineSizeBytes * 2;
-    uint32_t height = sizeBytes / resultLineSizeBytes;
+    // For CI4 textures, the render tile line_size_bytes is padded to 64-bit word
+    // boundaries (8 bytes). When the actual data line size (from LoadTile) is
+    // smaller, use that instead to compute correct width/height.
+    // Example: 8-wide CI4 = 4 bytes/line, but render tile rounds to 8 bytes,
+    // giving wrong 16x32 instead of correct 8x64.
+    uint32_t effectiveLineSize = resultLineSizeBytes;
+    if (lineSizeBytes > 0 && lineSizeBytes < resultLineSizeBytes) {
+        effectiveLineSize = lineSizeBytes;
+    }
+    uint32_t width = effectiveLineSize * 2;
+    uint32_t height = sizeBytes / effectiveLineSize;
+
+    // A single line of pixels should not equal the entire image (height == 1 non-withstanding)
+    if (fullImageLineSizeBytes == sizeBytes) {
+        fullImageLineSizeBytes = width / 2;
+    }
+
+    uint32_t i = 0;
+
+    for (uint32_t y = 0; y < height; y++) {
+        for (uint32_t x = 0; x < width; x++) {
+            uint32_t clrIdx = (y * (fullImageLineSizeBytes * 2)) + (x);
+
+            uint8_t byte = addr[clrIdx / 2];
+            uint8_t idx = (byte >> (4 - (clrIdx % 2) * 4)) & 0xf;
+            uint16_t col16 = (palette[idx * 2] << 8) | palette[idx * 2 + 1]; // Big endian load
+            uint8_t a = col16 & 1;
+            uint8_t r = col16 >> 11;
+            uint8_t g = (col16 >> 6) & 0x1f;
+            uint8_t b = (col16 >> 1) & 0x1f;
+            mTexUploadBuffer[4 * i + 0] = SCALE_5_8(r);
+            mTexUploadBuffer[4 * i + 1] = SCALE_5_8(g);
+            mTexUploadBuffer[4 * i + 2] = SCALE_5_8(b);
+            mTexUploadBuffer[4 * i + 3] = a ? 255 : 0;
+
+            i++;
+        }
+    }
 
     mRapi->UploadTexture(mTexUploadBuffer, width, height);
 }
@@ -952,6 +981,7 @@ void Interpreter::ImportTexture(int i, int tile, bool importReplacement) {
     uint8_t siz = mRdp->texture_tile[tile].siz;
     uint32_t texFlags = mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].tex_flags;
     uint32_t tmemIdex = mRdp->texture_tile[tile].tmem_index;
+
     uint8_t paletteIndex = mRdp->texture_tile[tile].palette;
     uint32_t origSizeBytes = mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].orig_size_bytes;
 
@@ -985,6 +1015,12 @@ void Interpreter::ImportTexture(int i, int tile, bool importReplacement) {
     // if load as raw is set then we load_raw();
     if ((texFlags & TEX_FLAG_LOAD_AS_RAW) != 0) {
         ImportTextureRaw(tile, importReplacement);
+        return;
+    }
+
+    if (origAddr != nullptr && (uintptr_t)origAddr < 0x1000) {
+        SPDLOG_ERROR("ImportTexture: bad addr={} fmt={} siz={} tile={} tmem_index={} tex_flags=0x{:X} orig_size={}",
+                     (uintptr_t)origAddr, fmt, siz, tile, tmemIdex, texFlags, origSizeBytes);
         return;
     }
 
@@ -1381,7 +1417,9 @@ void Interpreter::GfxSpVertex(size_t n_vertices, size_t dest_index, const F3DVtx
         if (y > w) {
             d->clip_rej |= 8; // CLIP_TOP
         }
-        // if (z < -w) d->clip_rej |= 16; // CLIP_NEAR
+        if (z < -w) {
+            d->clip_rej |= 16; // CLIP_NEAR
+        }
         if (z > w) {
             d->clip_rej |= 32; // CLIP_FAR
         }
@@ -1428,8 +1466,6 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
     struct LoadedVertex* v3 = &mRsp->loaded_vertices[vtx3_idx];
     struct LoadedVertex* v_arr[3] = { v1, v2, v3 };
 
-    // if (rand()%2) return;
-
     if (v1->clip_rej & v2->clip_rej & v3->clip_rej) {
         // The whole triangle lies outside the visible area
         return;
@@ -1440,37 +1476,44 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
     const uint32_t cull_back = get_attr(CULL_BACK);
 
     if ((mRsp->geometry_mode & cull_both) != 0) {
-        float dx1 = v1->x / (v1->w) - v2->x / (v2->w);
-        float dy1 = v1->y / (v1->w) - v2->y / (v2->w);
-        float dx2 = v3->x / (v3->w) - v2->x / (v2->w);
-        float dy2 = v3->y / (v3->w) - v2->y / (v2->w);
-        float cross = dx1 * dy2 - dy1 * dx2;
+        // Guard against division by near-zero w which produces infinity/NaN
+        // in the cross product, causing incorrect cull decisions and deformed
+        // triangles. When w is near zero (vertex at the camera plane), skip
+        // software culling and let the GPU's hardware clipper handle it.
+        constexpr float W_EPSILON = 0.001f;
+        if (fabsf(v1->w) > W_EPSILON && fabsf(v2->w) > W_EPSILON && fabsf(v3->w) > W_EPSILON) {
+            float dx1 = v1->x / (v1->w) - v2->x / (v2->w);
+            float dy1 = v1->y / (v1->w) - v2->y / (v2->w);
+            float dx2 = v3->x / (v3->w) - v2->x / (v2->w);
+            float dy2 = v3->y / (v3->w) - v2->y / (v2->w);
+            float cross = dx1 * dy2 - dy1 * dx2;
 
-        if ((v1->w < 0) ^ (v2->w < 0) ^ (v3->w < 0)) {
-            // If one vertex lies behind the eye, negating cross will give the correct result.
-            // If all vertices lie behind the eye, the triangle will be rejected anyway.
-            cross = -cross;
-        }
+            if ((v1->w < 0) ^ (v2->w < 0) ^ (v3->w < 0)) {
+                // If one vertex lies behind the eye, negating cross will give the correct result.
+                // If all vertices lie behind the eye, the triangle will be rejected anyway.
+                cross = -cross;
+            }
 
-        // If inverted culling is requested, negate the cross
-        if (ucode_handler_index == UcodeHandlers::ucode_f3dex2 &&
-            (mRsp->extra_geometry_mode & G_EX_INVERT_CULLING) == 1) {
-            cross = -cross;
-        }
+            // If inverted culling is requested, negate the cross
+            if (ucode_handler_index == UcodeHandlers::ucode_f3dex2 &&
+                (mRsp->extra_geometry_mode & G_EX_INVERT_CULLING) == 1) {
+                cross = -cross;
+            }
 
-        auto cull_type = mRsp->geometry_mode & cull_both;
+            auto cull_type = mRsp->geometry_mode & cull_both;
 
-        if (cull_type == cull_front) {
-            if (cross <= 0) {
+            if (cull_type == cull_front) {
+                if (cross <= 0) {
+                    return;
+                }
+            } else if (cull_type == cull_back) {
+                if (cross >= 0) {
+                    return;
+                }
+            } else if (cull_type == cull_both) {
+                // Why is this even an option?
                 return;
             }
-        } else if (cull_type == cull_back) {
-            if (cross >= 0) {
-                return;
-            }
-        } else if (cull_type == cull_both) {
-            // Why is this even an option?
-            return;
         }
     }
 
@@ -1603,9 +1646,18 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
 
             uint32_t tex_size_bytes = mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].orig_size_bytes;
             uint32_t line_size = mRdp->texture_tile[tile].line_size_bytes;
+            uint32_t load_line_size = mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].line_size_bytes;
 
             if (line_size == 0) {
                 line_size = 1;
+            }
+
+            // For CI4 textures, the render tile line_size_bytes is padded to
+            // 64-bit word boundaries (8 bytes). Use the actual load line size
+            // when it's smaller, to get correct texture dimensions.
+            // Example -> Message Boxes
+            if (load_line_size > 0 && load_line_size < line_size) {
+                line_size = load_line_size;
             }
 
             tex_height[i] = tex_size_bytes / line_size;
@@ -1744,6 +1796,7 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
             if (clampT) {
                 mBufVbo[mBufVboLen++] = (tex_height2[t] - 0.5f) / tex_height[t];
             }
+
         }
 
         if (use_fog) {
@@ -2024,8 +2077,6 @@ void Interpreter::GfxDpSetScissor(uint32_t mode, uint32_t ulx, uint32_t uly, uin
 
 void Interpreter::GfxDpSetTextureImage(uint32_t format, uint32_t size, uint32_t width, const char* texPath,
                                        uint32_t texFlags, RawTexMetadata rawTexMetdata, const void* addr) {
-    // fprintf(stderr, "GfxDpSetTextureImage: %s (width=%d; size=0x%X)\n",
-    //         rawTexMetdata.resource ? rawTexMetdata.resource->GetInitData()->Path.c_str() : nullptr, width, size);
     mRdp->texture_to_load.addr = (const uint8_t*)addr;
     mRdp->texture_to_load.siz = size;
     mRdp->texture_to_load.width = width;
@@ -2123,9 +2174,6 @@ void Interpreter::GfxDpLoadBlock(uint8_t tile, uint32_t uls, uint32_t ult, uint3
     mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].tex_flags = mRdp->texture_to_load.tex_flags;
     mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].raw_tex_metadata = mRdp->texture_to_load.raw_tex_metadata;
     mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].addr = mRdp->texture_to_load.addr;
-    // fprintf(stderr, "GfxDpLoadBlock: line_size = 0x%x; orig = 0x%x; bpp=%d; lrs=%d\n", size_bytes,
-    // orig_size_bytes,
-    //         mRdp->texture_to_load.siz, lrs);
 
     const std::string& texPath =
         mRdp->texture_to_load.raw_tex_metadata.resource != nullptr
@@ -3149,6 +3197,15 @@ bool gfx_dl_handler_common(F3DGfx** cmd0) {
     Interpreter* gfx = mInstance.lock().get();
     F3DGfx* cmd = *cmd0;
     F3DGfx* subGFX = (F3DGfx*)gfx->SegAddr(cmd->words.w1);
+
+    // Auto-detect __OTR__ string pointers (same pattern as G_SETTIMG handler).
+    // Static Gfx[] arrays may contain gsSPDisplayList() with OTR path string defines as w1.
+    if ((cmd->words.w1 & 1) == 0 && subGFX != nullptr &&
+        gfx_check_image_signature((const char*)subGFX) == 1) {
+        const char* otrPath = (const char*)subGFX;
+        subGFX = (F3DGfx*)Ship::Context::GetInstance()->GetResourceManager()->GetResourceRawPointer(otrPath);
+    }
+
     if (C0(16, 1) == 0) {
         // Push return address
         if (subGFX != nullptr) {
@@ -3445,6 +3502,7 @@ bool gfx_set_timg_otr_hash_handler_custom(F3DGfx** cmd0) {
     RawTexMetadata rawTexMetadata = {};
 
     if (fileName == nullptr) {
+        SPDLOG_ERROR("G_SETTIMG_OTR_HASH: Hash miss! hash=0x{:016X} — texture not found in archive", hash);
         (*cmd0)++;
         return false;
     }
@@ -4219,11 +4277,21 @@ static void gfx_step() {
                 return;
             }
         } else {
-            SPDLOG_CRITICAL("Unhandled OP code: 0x{:X}, for loaded ucode: {}", (uint8_t)opcode,
-                            (uint32_t)ucode_handler_index);
+            SPDLOG_CRITICAL("Unhandled OP code: 0x{:X}, for loaded ucode: {}, cmd_addr={}, w0=0x{:08X}, w1=0x{:08X}",
+                            (uint8_t)opcode, (uint32_t)ucode_handler_index,
+                            (void*)cmd, cmd->words.w0, cmd->words.w1);
+            // Check if the data looks like an ASCII string (OTR path leaked into DL)
+            const char* asStr = reinterpret_cast<const char*>(cmd);
+            bool looksLikeString = true;
+            for (int i = 0; i < 16 && asStr[i] != '\0'; i++) {
+                if (asStr[i] < 0x20 || asStr[i] > 0x7E) { looksLikeString = false; break; }
+            }
+            if (looksLikeString) {
+                SPDLOG_CRITICAL("  cmd_addr looks like string: \"{:.64s}\"", asStr);
+            }
         }
     } else {
-        SPDLOG_CRITICAL("Unhandled OP code: 0x{:X}, invalid ucode: {}", (uint8_t)opcode, (uint32_t)ucode_handler_index);
+        SPDLOG_CRITICAL("Unhandled OP code: 0x{:X}, invalid ucode: {}, cmd_addr={}", (uint8_t)opcode, (uint32_t)ucode_handler_index, (void*)cmd);
     }
 
     ++cmd;
