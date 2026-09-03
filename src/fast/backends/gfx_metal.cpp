@@ -1212,6 +1212,7 @@ void* GfxRenderingAPIMetal::GetFramebufferTextureId(int fb_id) {
 }
 
 void GfxRenderingAPIMetal::SelectTextureFb(int fb_id, int tile) {
+    mTextures[mFramebuffers[fb_id].mTextureId].filtering = FILTER_LINEAR;
     SelectTexture(tile, mFramebuffers[fb_id].mTextureId);
 }
 
