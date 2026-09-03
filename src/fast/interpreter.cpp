@@ -2261,8 +2261,18 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
     bool use_noise = (mRdp->other_mode_l & (3U << G_MDSFT_ALPHACOMPARE)) == G_AC_DITHER;
     bool use_2cyc = (mRdp->other_mode_h & (3U << G_MDSFT_CYCLETYPE)) == G_CYC_2CYCLE;
     bool alpha_threshold = (mRdp->other_mode_l & (3U << G_MDSFT_ALPHACOMPARE)) == G_AC_THRESHOLD;
+    // A blender cycle computes (P * A + M * B) / (A + B). When both P and M are CLR_MEM the
+    // result is the framebuffer itself, so the draw writes coverage/Z but never colour. PM64
+    // uses this as a depth-only mask (e.g. the fire_breath mouth aperture in the HOS intro).
+    // Cycle 1 puts P at bits 30-31 and M at 22-23; cycle 2 puts them at 28-29 and 20-21.
+    bool colour_is_memory = ((mRdp->other_mode_l & (3U << 30)) == ((uint32_t)G_BL_CLR_MEM << 30) &&
+                             (mRdp->other_mode_l & (3U << 22)) == ((uint32_t)G_BL_CLR_MEM << 22)) ||
+                            ((mRdp->other_mode_l & (3U << 28)) == ((uint32_t)G_BL_CLR_MEM << 28) &&
+                             (mRdp->other_mode_l & (3U << 20)) == ((uint32_t)G_BL_CLR_MEM << 20));
     bool invisible =
-        (mRdp->other_mode_l & (3 << 24)) == (G_BL_0 << 24) && (mRdp->other_mode_l & (3 << 20)) == (G_BL_CLR_MEM << 20);
+        ((mRdp->other_mode_l & (3 << 24)) == (G_BL_0 << 24) &&
+         (mRdp->other_mode_l & (3 << 20)) == (G_BL_CLR_MEM << 20)) ||
+        colour_is_memory;
     bool use_grayscale = mRdp->grayscale;
     bool use_prim_depth = (mRdp->other_mode_l & G_ZS_PRIM) != 0;
 
