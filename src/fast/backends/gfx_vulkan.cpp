@@ -2351,8 +2351,8 @@ void* GfxRenderingAPIVK::GetFramebufferTextureId(int fbId) {
     return GetTextureById(mFramebuffers[fbId].mTextureId);
 }
 
-void GfxRenderingAPIVK::SelectTextureFb(int fbId) {
-    SelectTexture(0, mFramebuffers[fbId].mTextureId);
+void GfxRenderingAPIVK::SelectTextureFb(int fbId, int tile) {
+    SelectTexture(tile, mFramebuffers[fbId].mTextureId);
 }
 
 ImTextureID GfxRenderingAPIVK::GetTextureById(int id) {
