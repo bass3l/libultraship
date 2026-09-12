@@ -593,14 +593,14 @@ void GfxWindowBackendDXGI::Init(const char* game_name, const char* gfx_api_name,
     current_width = wr.right - wr.left;
     current_height = wr.bottom - wr.top;
     monitor_list = GetMonitorList();
-    posX = posX;
-    posY = posY;
-    if (!GetMonitorAtCoords(monitor_list, posX, posY, current_width, current_height, mMonitor)) {
-        posX = 100;
-        posY = 100;
+    mPosX = posX;
+    mPosY = posY;
+    if (!GetMonitorAtCoords(monitor_list, mPosX, mPosY, current_width, current_height, mMonitor)) {
+        mPosX = 100;
+        mPosY = 100;
     }
 
-    h_wnd = CreateWindowW(WINCLASS_NAME, w_title, WS_OVERLAPPEDWINDOW, posX + wr.left, posY + wr.top, current_width,
+    h_wnd = CreateWindowW(WINCLASS_NAME, w_title, WS_OVERLAPPEDWINDOW, mPosX + wr.left, mPosY + wr.top, current_width,
                           current_height, nullptr, nullptr, nullptr, this);
 
     LoadDxgi();

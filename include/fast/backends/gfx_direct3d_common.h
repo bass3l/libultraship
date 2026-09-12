@@ -145,11 +145,11 @@ class GfxRenderingAPIDX11 final : public GfxRenderingAPI {
     FilteringMode GetTextureFilter() override;
     ImTextureID GetTextureById(int id) override;
 
-    PFN_D3D11_CREATE_DEVICE mDX11CreateDevice;
+    PFN_D3D11_CREATE_DEVICE mDX11CreateDevice = nullptr;
     Microsoft::WRL::ComPtr<ID3D11DeviceContext> mContext;
     Microsoft::WRL::ComPtr<ID3D11Device> mDevice;
     GfxWindowBackendDXGI* mWindowBackend = nullptr;
-    D3D_FEATURE_LEVEL mFeatureLevel;
+    D3D_FEATURE_LEVEL mFeatureLevel = {};
 
     std::shared_ptr<Ship::ConsoleVariable> mConsoleVariable;
     std::shared_ptr<Ship::ResourceManager> mResourceManager;
@@ -158,12 +158,12 @@ class GfxRenderingAPIDX11 final : public GfxRenderingAPI {
     void CreateDepthStencilObjects(uint32_t width, uint32_t height, uint32_t msaa_count, ID3D11DepthStencilView** view,
                                    ID3D11ShaderResourceView** srv);
 
-    HMODULE mDX11Module;
+    HMODULE mDX11Module = nullptr;
 
-    HMODULE mCompilerModule;
-    pD3DCompile mD3dCompile;
+    HMODULE mCompilerModule = nullptr;
+    pD3DCompile mD3dCompile = nullptr;
 
-    uint32_t mMsaaNumQualityLevels[D3D11_MAX_MULTISAMPLE_SAMPLE_COUNT];
+    uint32_t mMsaaNumQualityLevels[D3D11_MAX_MULTISAMPLE_SAMPLE_COUNT] = {};
 
     Microsoft::WRL::ComPtr<ID3D11RasterizerState> mRasterizerState;
     Microsoft::WRL::ComPtr<ID3D11DepthStencilState> mDepthStencilState;
@@ -181,30 +181,30 @@ class GfxRenderingAPIDX11 final : public GfxRenderingAPI {
     Microsoft::WRL::ComPtr<ID3D11ComputeShader> mComputeShader;
     Microsoft::WRL::ComPtr<ID3D11ComputeShader> mComputeShaderMsaa;
     Microsoft::WRL::ComPtr<ID3DBlob> mComputeShaderMsaaBlob;
-    size_t mCoordBufferSize;
+    size_t mCoordBufferSize = 0;
 
 #if DEBUG_D3D
     Microsoft::WRL::ComPtr<ID3D11Debug> debug;
 #endif
 
-    PerFrameCB mPerFrameCbData;
-    PerDrawCB mPerDrawCbData;
-    PerPrimDepthCB mPerPrimDepthCbData;
+    PerFrameCB mPerFrameCbData = {};
+    PerDrawCB mPerDrawCbData = {};
+    PerPrimDepthCB mPerPrimDepthCbData = {};
 
     std::map<std::pair<uint64_t, uint64_t>, struct ShaderProgramD3D11> mShaderProgramPool;
 
     std::vector<struct TextureData> mTextures;
-    int mCurrentTile;
+    int mCurrentTile = 0;
     uint32_t mCurrentTextureIds[SHADER_MAX_TEXTURES] = {};
 
     std::vector<FramebufferDX11> mFrameBuffers;
 
     // Current state
 
-    struct ShaderProgramD3D11* mShaderProgram;
+    struct ShaderProgramD3D11* mShaderProgram = nullptr;
 
-    int32_t mRenderTargetHeight;
-    int mCurrentFramebuffer;
+    int32_t mRenderTargetHeight = 0;
+    int mCurrentFramebuffer = 0;
     FilteringMode mCurrentFilterMode = FILTER_NONE;
     bool mLodMaxDirty = true;
 

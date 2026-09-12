@@ -297,7 +297,7 @@ class Window : public Component {
   private:
     std::shared_ptr<Gui> mGui;
     int32_t mLastScancode = -1;
-    int32_t mWindowBackend;
+    int32_t mWindowBackend = -1;
     std::shared_ptr<MouseStateManager> mMouseStateManager;
     std::shared_ptr<std::vector<int32_t>> mAvailableWindowBackends;
     // Hold a reference to Config because Window has a Save function called on Context destructor, where the singleton
